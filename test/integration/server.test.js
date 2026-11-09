@@ -1,7 +1,7 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { io } = require('socket.io-client');
-const { server, startServer, stopServer } = require('../../server');
+const { server, startServer, stopServer, gameState } = require('../../server');
 
 function waitForEvent(socket, eventName, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
@@ -127,9 +127,75 @@ describe('Test de Integración Socket.IO (E2E en Puerto Efímero)', () => {
     assert.equal(err.message, 'El equipo está eliminado o no es válido.');
   });
 
-  it.skip('BUG 3: timerInterval no se cancela al cambiar de ronda o pregunta mientras corre el cronometro', () => {
-    // Si el moderador cambia de ronda sin pausar/detener, el setInterval original sigue activo
-    // causando colisiones de eventos de tiempo en rondas futuras.
-    assert.fail('Demostración de fuga de intervalo en server.js');
-  });
+  const navigationCases = [
+    {
+      event: 'admin_select_question',
+      payload: { questionIndex: 1 },
+      expectedRemaining: 120
+    },
+    {
+      event: 'admin_next_question',
+      payload: {},
+      expectedRemaining: 120
+    },
+    {
+      event: 'admin_select_round',
+      payload: { roundIndex: 1 },
+      expectedRemaining: 180
+    },
+    {
+      event: 'admin_next_round',
+      payload: {},
+      expectedRemaining: 360
+    },
+    {
+      event: 'admin_reset_game',
+      payload: {},
+      expectedRemaining: 120
+    }
+  ];
+
+  for (const tc of navigationCases) {
+    it(`BUG 3: detiene el cronometro y no descuenta tiempo tras emitir ${tc.event}`, async () => {
+      // 1. Iniciar temporizador
+      const questionStartedPromise = waitForEvent(adminSocket, 'question_started');
+      adminSocket.emit('admin_start_timer', { adminPassword });
+      await questionStartedPromise;
+      assert.equal(gameState.timer.isRunning, true);
+
+      // 2. Registrar contadores de eventos de tiempo y preparar escucha de navegación
+      let ticks = 0;
+      let timesUp = 0;
+      const onTick = () => { ticks++; };
+      const onTimeUp = () => { timesUp++; };
+      adminSocket.on('timer_tick', onTick);
+      adminSocket.on('question_time_up', onTimeUp);
+
+      const idleStatePromise = new Promise((resolve) => {
+        const onState = (state) => {
+          if (state.questionState === 'idle') {
+            adminSocket.off('state_update', onState);
+            resolve(state);
+          }
+        };
+        adminSocket.on('state_update', onState);
+      });
+
+      // 3. Emitir evento de navegación
+      adminSocket.emit(tc.event, { adminPassword, ...tc.payload });
+      await idleStatePromise;
+
+      // 4. Esperar > 1,5 s (1600 ms) para comprobar que timerInterval no sigue activo
+      await new Promise(resolve => setTimeout(resolve, 1600));
+
+      adminSocket.off('timer_tick', onTick);
+      adminSocket.off('question_time_up', onTimeUp);
+
+      // 5. Validaciones: sin ticks ni time_up, y remaining igual a timeLimit de la nueva pregunta
+      assert.equal(ticks, 0, `No se debe recibir timer_tick tras ${tc.event}`);
+      assert.equal(timesUp, 0, `No se debe recibir question_time_up tras ${tc.event}`);
+      assert.equal(gameState.timer.remaining, tc.expectedRemaining, `timer.remaining debe mantenerse en ${tc.expectedRemaining}`);
+      assert.equal(gameState.timer.isRunning, false, 'timer.isRunning debe ser false');
+    });
+  }
 });

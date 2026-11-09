@@ -595,12 +595,59 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start Server
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`====================================================`);
-  console.log(` ¿QUIÉN QUIERE SER INGENIERO? — SERVIDOR EN VIVO`);
-  console.log(` Puerto: ${PORT} | Entorno: ${NODE_ENV}`);
-  console.log(` Orígenes Permitidos: ${rawAllowedOrigins.join(', ')}`);
-  console.log(` Rondas cargadas: ${questionsData.rounds.length}`);
-  console.log(`====================================================`);
-});
+// Lifecycle Helpers
+function startServer(port = PORT, host = '0.0.0.0') {
+  return new Promise((resolve, reject) => {
+    server.listen(port, host, () => {
+      resolve(server);
+    }).on('error', reject);
+  });
+}
+
+function stopServer() {
+  return new Promise((resolve) => {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+    if (io) {
+      io.close(() => {
+        if (server.listening) {
+          server.close(() => resolve());
+        } else {
+          resolve();
+        }
+      });
+    } else if (server.listening) {
+      server.close(() => resolve());
+    } else {
+      resolve();
+    }
+  });
+}
+
+// Start Server when executed directly
+if (require.main === module) {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`====================================================`);
+    console.log(` ¿QUIÉN QUIERE SER INGENIERO? — SERVIDOR EN VIVO`);
+    console.log(` Puerto: ${PORT} | Entorno: ${NODE_ENV}`);
+    console.log(` Orígenes Permitidos: ${rawAllowedOrigins.join(', ')}`);
+    console.log(` Rondas cargadas: ${questionsData.rounds.length}`);
+    console.log(`====================================================`);
+  });
+}
+
+module.exports = {
+  app,
+  server,
+  io,
+  startServer,
+  stopServer,
+  DEFAULT_TEAMS,
+  gameState,
+  initRoundScores,
+  recalculateScores,
+  archiveCurrentQuestionSubmissions,
+  questionsData
+};

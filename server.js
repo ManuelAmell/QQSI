@@ -291,13 +291,12 @@ io.on('connection', (socket) => {
     const currentRound = questionsData.rounds[gameState.currentRoundIndex];
     if (!currentRound) return;
 
+    // Archive current question submissions before moving
+    archiveCurrentQuestionSubmissions();
+    recalculateScores();
+
     if (gameState.currentQuestionIndex < currentRound.questions.length - 1) {
       stopTimer();
-
-      // Archive current question submissions before moving
-      archiveCurrentQuestionSubmissions();
-      recalculateScores();
-
       gameState.currentQuestionIndex++;
       gameState.questionState = 'idle';
 

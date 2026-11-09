@@ -239,6 +239,8 @@ io.on('connection', (socket) => {
     if (!isValidAdminPassword(clean.adminPassword)) return;
     if (!validator.isValidNumber(clean.roundIndex, 0, questionsData.rounds.length - 1)) return;
 
+    stopTimer();
+
     gameState.currentRoundIndex = clean.roundIndex;
     gameState.currentQuestionIndex = 0;
     gameState.questionState = 'idle';
@@ -259,6 +261,8 @@ io.on('connection', (socket) => {
     const currentRound = questionsData.rounds[gameState.currentRoundIndex];
     if (!currentRound) return;
     if (!validator.isValidNumber(clean.questionIndex, 0, currentRound.questions.length - 1)) return;
+
+    stopTimer();
 
     // Archive current question before switching
     archiveCurrentQuestionSubmissions();
@@ -292,6 +296,7 @@ io.on('connection', (socket) => {
     recalculateScores();
 
     if (gameState.currentQuestionIndex < currentRound.questions.length - 1) {
+      stopTimer();
       gameState.currentQuestionIndex++;
       gameState.questionState = 'idle';
 
@@ -425,6 +430,7 @@ io.on('connection', (socket) => {
     const clean = validator.sanitizePayload(data);
     if (!isValidAdminPassword(clean.adminPassword)) return;
     if (gameState.currentRoundIndex < questionsData.rounds.length - 1) {
+      stopTimer();
       archiveCurrentQuestionSubmissions();
       gameState.currentRoundIndex++;
       gameState.currentQuestionIndex = 0;
@@ -444,6 +450,8 @@ io.on('connection', (socket) => {
   socket.on('admin_reset_game', (data) => {
     const clean = validator.sanitizePayload(data);
     if (!isValidAdminPassword(clean.adminPassword)) return;
+
+    stopTimer();
 
     gameState.teams = JSON.parse(JSON.stringify(DEFAULT_TEAMS));
     gameState.currentRoundIndex = 0;

@@ -109,11 +109,16 @@ function recalculateScores(gameState, questionsData) {
 }
 
 function archiveCurrentQuestionSubmissions(gameState) {
-  if (!gameState.submissions || gameState.submissions.length === 0) return;
-
   const existingIdx = gameState.history.findIndex(
     h => h.roundIndex === gameState.currentRoundIndex && h.questionIndex === gameState.currentQuestionIndex
   );
+
+  if (!gameState.submissions || gameState.submissions.length === 0) {
+    if (existingIdx >= 0) {
+      gameState.history[existingIdx].submissions = [];
+    }
+    return;
+  }
 
   const historyEntry = {
     roundIndex: gameState.currentRoundIndex,

@@ -247,7 +247,11 @@ describe('utils/game.js (Motor Puro del Concurso)', () => {
   });
 
   describe('Bugs Demostrados en la Lógica Actual (Marcados con skip/todo)', () => {
-    it.skip('BUG 1: recalculateScores() falla silenciosamente si questionsData.rounds esta vacio o index fuera de rango', () => {
+    it('BUG 1 (No alcanzable en runtime): recalculateScores() retorna como no-op si questionsData.rounds no contiene currentRoundIndex', () => {
+      // Este comportamiento no es alcanzable mediante eventos reales de Socket.IO en el servidor:
+      // server.js valida cualquier índice de ronda con validator.isValidNumber(clean.roundIndex, 0, questionsData.rounds.length - 1)
+      // en 'admin_select_round', restringe 'admin_next_round' con gameState.currentRoundIndex < questionsData.rounds.length - 1,
+      // y 'admin_reset_game' lo restablece a 0. En runtime el índice siempre corresponde a una ronda válida en questionsData.
       gameState.currentRoundIndex = 999;
       gameState.submissions = [
         { teamId: 'sistemas', order: 1, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 }
@@ -256,11 +260,11 @@ describe('utils/game.js (Motor Puro del Concurso)', () => {
       assert.equal(gameState.submissions[0].totalPoints, 0);
     });
 
-    it.skip('BUG 2: archiveCurrentQuestionSubmissions() no borra historial previo si la pregunta se reinicia sin entregas', () => {
+    it('BUG 2: archiveCurrentQuestionSubmissions() vacía el historial previo si la pregunta se reinicia sin entregas', () => {
       gameState.history = [{ roundIndex: 0, questionIndex: 0, submissions: [{ teamId: 'sistemas', totalPoints: 15 }] }];
       gameState.submissions = [];
       game.archiveCurrentQuestionSubmissions(gameState);
-      assert.equal(gameState.history[0].submissions.length, 1);
+      assert.equal(gameState.history[0].submissions.length, 0);
     });
   });
 });

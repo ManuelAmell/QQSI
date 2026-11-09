@@ -198,4 +198,101 @@ describe('Test de Integración Socket.IO (E2E en Puerto Efímero)', () => {
       assert.equal(gameState.timer.isRunning, false, 'timer.isRunning debe ser false');
     });
   }
+
+  it('BUG 1: no es alcanzable via eventos reales porque admin_select_round valida con isValidNumber y mantiene el indice valido', async () => {
+    const initialRoundIndex = gameState.currentRoundIndex;
+    // Intentar seleccionar una ronda fuera de rango (ej. 999 o -1)
+    adminSocket.emit('admin_select_round', { adminPassword, roundIndex: 999 });
+    adminSocket.emit('admin_select_round', { adminPassword, roundIndex: -1 });
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // El índice no debe haber cambiado a un valor inválido y la ronda actual siempre existe
+    assert.equal(gameState.currentRoundIndex, initialRoundIndex);
+    assert.ok(gameState.currentRoundIndex >= 0);
+  });
+
+  it('BUG 2: reinicio de pregunta sin entregas vacia su historial y no acumula puntos previos en recalculateScores', async () => {
+    // Asegurar estado inicial limpio
+    const resetPromise = waitForEvent(adminSocket, 'state_update');
+    adminSocket.emit('admin_reset_game', { adminPassword });
+    await resetPromise;
+
+    // 1. Iniciar Pregunta 0 y temporizador
+    const startedPromise = waitForEvent(adminSocket, 'question_started');
+    adminSocket.emit('admin_start_timer', { adminPassword });
+    await startedPromise;
+
+    // 2. Entrega de Sistemas
+    const subPromise = waitForEvent(teamSistemasSocket, 'submission_confirmed');
+    teamSistemasSocket.emit('submit_answer', { teamId: 'sistemas' });
+    await subPromise;
+
+    // 3. Evaluar entrega como correcta -> Sistemas recibe 15 pts (10 base + 5 bono)
+    const evalPromise = waitForEvent(adminSocket, 'evaluation_updated');
+    adminSocket.emit('admin_evaluate_answer', {
+      adminPassword,
+      submissionIndex: 0,
+      correct: true
+    });
+    await evalPromise;
+    assert.equal(gameState.roundScores['sistemas'], 15);
+
+    // 4. Avanzar a Pregunta 1 -> Pregunta 0 queda archivada en historial y Sistemas mantiene 15 pts
+    const nextQPromise = new Promise((resolve) => {
+      const onState = (state) => {
+        if (state.currentQuestionIndex === 1 && state.questionState === 'idle') {
+          adminSocket.off('state_update', onState);
+          resolve(state);
+        }
+      };
+      adminSocket.on('state_update', onState);
+    });
+    adminSocket.emit('admin_next_question', { adminPassword });
+    const stateAtQ1 = await nextQPromise;
+    assert.equal(stateAtQ1.roundScores['sistemas'], 15);
+    assert.equal(gameState.history.length, 1);
+    assert.equal(gameState.history[0].submissions.length, 1);
+
+    // 5. Regresar a Pregunta 0 -> restaura las entregas previas desde historial
+    const backToQ0Promise = new Promise((resolve) => {
+      const onState = (state) => {
+        if (state.currentQuestionIndex === 0 && state.questionState === 'idle') {
+          adminSocket.off('state_update', onState);
+          resolve(state);
+        }
+      };
+      adminSocket.on('state_update', onState);
+    });
+    adminSocket.emit('admin_select_question', { adminPassword, questionIndex: 0 });
+    const stateBackAtQ0 = await backToQ0Promise;
+    assert.equal(stateBackAtQ0.submissions.length, 1);
+
+    // 6. Reiniciar Pregunta 0 (admin_start_timer vacia gameState.submissions)
+    const restartedPromise = waitForEvent(adminSocket, 'question_started');
+    adminSocket.emit('admin_start_timer', { adminPassword });
+    await restartedPromise;
+    assert.equal(gameState.submissions.length, 0);
+
+    // 7. Navegar a Pregunta 1 sin que ningun equipo haya entregado en Pregunta 0 reiniciada
+    const toQ1AgainPromise = new Promise((resolve) => {
+      const onState = (state) => {
+        if (state.currentQuestionIndex === 1 && state.questionState === 'idle') {
+          adminSocket.off('state_update', onState);
+          resolve(state);
+        }
+      };
+      adminSocket.on('state_update', onState);
+    });
+    adminSocket.emit('admin_select_question', { adminPassword, questionIndex: 1 });
+    const stateFinalAtQ1 = await toQ1AgainPromise;
+
+    // 8. Verificaciones:
+    // El historial de la Pregunta 0 debe haberse vaciado y Sistemas NO debe sumar los 15 puntos viejos
+    const histQ0 = gameState.history.find(h => h.roundIndex === 0 && h.questionIndex === 0);
+    assert.ok(histQ0, 'La entrada de historial para la ronda 0, pregunta 0 debe existir');
+    assert.equal(histQ0.submissions.length, 0, 'Las entregas de la pregunta 0 en historial deben estar vacías');
+    assert.equal(stateFinalAtQ1.roundScores['sistemas'], 0, 'Sistemas debe tener 0 puntos tras vaciarse la pregunta 0');
+    assert.equal(gameState.roundScores['sistemas'], 0, 'gameState.roundScores de Sistemas debe ser 0');
+  });
 });

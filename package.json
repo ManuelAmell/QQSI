@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test",
     "build": "echo 'Static assets ready'",
     "vercel-build": "echo 'Vercel static build complete'"
   },

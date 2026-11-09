@@ -1,20 +1,18 @@
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const game = require('../../utils/game');
 const server = require('../../server');
 
-describe('Caracterización de Reglas de Juego (server.js actual)', () => {
+describe('utils/game.js (Motor Puro del Concurso)', () => {
   let gameState;
+  const mockQuestionsData = {
+    rounds: [
+      { id: 'facil', timeLimit: 120, questions: [{ id: 'q1' }, { id: 'q2' }] }
+    ]
+  };
 
   beforeEach(() => {
-    // Restaurar gameState a un estado base antes de cada test
-    gameState = server.gameState;
-    gameState.teams = JSON.parse(JSON.stringify(server.DEFAULT_TEAMS));
-    gameState.currentRoundIndex = 0;
-    gameState.currentQuestionIndex = 0;
-    gameState.questionState = 'idle';
-    gameState.submissions = [];
-    gameState.history = [];
-    server.initRoundScores();
+    gameState = game.createInitialGameState();
   });
 
   describe('DEFAULT_TEAMS y Estado Inicial', () => {
@@ -36,109 +34,97 @@ describe('Caracterización de Reglas de Juego (server.js actual)', () => {
       gameState.teams[1].eliminated = true;
       gameState.teams[1].eliminatedInRound = 1;
 
-      server.initRoundScores();
+      game.initRoundScores(gameState);
 
       assert.equal(gameState.teams[0].score, 0);
       assert.equal(gameState.roundScores['sistemas'], 0);
-      // El equipo eliminado conserva su score previo y no está en roundScores
       assert.equal(gameState.teams[1].score, 15);
       assert.equal(gameState.roundScores['software'], undefined);
     });
   });
 
-  describe('Reglas de Puntuación Base y Bonos de Velocidad', () => {
+  describe('Reglas de Puntuación Base y Bonos de Velocidad (calculateSubmissionScores)', () => {
     it('otorga 10 puntos base solo si la respuesta es correcta', () => {
-      gameState.submissions = [
+      const submissions = [
         { teamId: 'sistemas', order: 1, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 },
         { teamId: 'software', order: 2, correct: false, basePoints: 0, bonusPoints: 0, totalPoints: 0 },
         { teamId: 'alimentos', order: 3, correct: null, basePoints: 0, bonusPoints: 0, totalPoints: 0 }
       ];
 
-      server.recalculateScores();
+      game.calculateSubmissionScores(submissions);
 
-      assert.equal(gameState.submissions[0].basePoints, 10);
-      assert.equal(gameState.submissions[1].basePoints, 0);
-      assert.equal(gameState.submissions[2].basePoints, 0);
+      assert.equal(submissions[0].basePoints, 10);
+      assert.equal(submissions[1].basePoints, 0);
+      assert.equal(submissions[2].basePoints, 0);
     });
 
     it('asigna bonos de velocidad +5, +3, +1 segun orden de acierto', () => {
-      gameState.submissions = [
+      const submissions = [
         { teamId: 'sistemas', order: 1, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 },
         { teamId: 'software', order: 2, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 },
         { teamId: 'alimentos', order: 3, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 },
         { teamId: 'quimica', order: 4, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 }
       ];
 
-      server.recalculateScores();
+      game.calculateSubmissionScores(submissions);
 
-      // 1er acierto: 10 + 5 = 15
-      assert.equal(gameState.submissions[0].bonusPoints, 5);
-      assert.equal(gameState.submissions[0].totalPoints, 15);
+      assert.equal(submissions[0].bonusPoints, 5);
+      assert.equal(submissions[0].totalPoints, 15);
 
-      // 2do acierto: 10 + 3 = 13
-      assert.equal(gameState.submissions[1].bonusPoints, 3);
-      assert.equal(gameState.submissions[1].totalPoints, 13);
+      assert.equal(submissions[1].bonusPoints, 3);
+      assert.equal(submissions[1].totalPoints, 13);
 
-      // 3er acierto: 10 + 1 = 11
-      assert.equal(gameState.submissions[2].bonusPoints, 1);
-      assert.equal(gameState.submissions[2].totalPoints, 11);
+      assert.equal(submissions[2].bonusPoints, 1);
+      assert.equal(submissions[2].totalPoints, 11);
 
-      // 4to acierto: 10 + 0 = 10
-      assert.equal(gameState.submissions[3].bonusPoints, 0);
-      assert.equal(gameState.submissions[3].totalPoints, 10);
+      assert.equal(submissions[3].bonusPoints, 0);
+      assert.equal(submissions[3].totalPoints, 10);
     });
 
     it('transfiere el bono de velocidad +5 al siguiente equipo si el primero falla', () => {
-      gameState.submissions = [
+      const submissions = [
         { teamId: 'sistemas', order: 1, correct: false, basePoints: 0, bonusPoints: 0, totalPoints: 0 },
         { teamId: 'alimentos', order: 2, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 },
         { teamId: 'quimica', order: 3, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 }
       ];
 
-      server.recalculateScores();
+      game.calculateSubmissionScores(submissions);
 
-      // Sistemas fallo: 0 base, 0 bono, 0 total
-      assert.equal(gameState.submissions[0].basePoints, 0);
-      assert.equal(gameState.submissions[0].bonusPoints, 0);
-      assert.equal(gameState.submissions[0].totalPoints, 0);
+      assert.equal(submissions[0].basePoints, 0);
+      assert.equal(submissions[0].bonusPoints, 0);
+      assert.equal(submissions[0].totalPoints, 0);
 
-      // Alimentos fue el 1er acierto -> recibe el bono transferido de +5
-      assert.equal(gameState.submissions[1].basePoints, 10);
-      assert.equal(gameState.submissions[1].bonusPoints, 5);
-      assert.equal(gameState.submissions[1].totalPoints, 15);
+      assert.equal(submissions[1].basePoints, 10);
+      assert.equal(submissions[1].bonusPoints, 5);
+      assert.equal(submissions[1].totalPoints, 15);
 
-      // Quimica fue el 2do acierto -> recibe +3
-      assert.equal(gameState.submissions[2].basePoints, 10);
-      assert.equal(gameState.submissions[2].bonusPoints, 3);
-      assert.equal(gameState.submissions[2].totalPoints, 13);
+      assert.equal(submissions[2].basePoints, 10);
+      assert.equal(submissions[2].bonusPoints, 3);
+      assert.equal(submissions[2].totalPoints, 13);
     });
 
     it('reordena dinamicamente los bonos cuando el moderador califica fuera de orden', () => {
-      gameState.submissions = [
+      const submissions = [
         { teamId: 'sistemas', order: 1, correct: null, basePoints: 0, bonusPoints: 0, totalPoints: 0 },
         { teamId: 'software', order: 2, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 }
       ];
 
-      // Al evaluar solo al segundo equipo, temporalmente tiene el 1er acierto
-      server.recalculateScores();
-      assert.equal(gameState.submissions[1].bonusPoints, 5);
-      assert.equal(gameState.submissions[1].totalPoints, 15);
+      game.calculateSubmissionScores(submissions);
+      assert.equal(submissions[1].bonusPoints, 5);
+      assert.equal(submissions[1].totalPoints, 15);
 
-      // Ahora el juez aprueba al primer equipo
-      gameState.submissions[0].correct = true;
-      server.recalculateScores();
+      submissions[0].correct = true;
+      game.calculateSubmissionScores(submissions);
 
-      // Sistemas pasa a 1er acierto (+5) y Software pasa a 2do acierto (+3)
-      assert.equal(gameState.submissions[0].bonusPoints, 5);
-      assert.equal(gameState.submissions[0].totalPoints, 15);
-      assert.equal(gameState.submissions[1].bonusPoints, 3);
-      assert.equal(gameState.submissions[1].totalPoints, 13);
+      assert.equal(submissions[0].bonusPoints, 5);
+      assert.equal(submissions[0].totalPoints, 15);
+      assert.equal(submissions[1].bonusPoints, 3);
+      assert.equal(submissions[1].totalPoints, 13);
     });
   });
 
-  describe('Acumulación de Ronda e Historial', () => {
+  describe('Acumulación de Ronda e Historial (recalculateScores)', () => {
     it('acumula los puntos de preguntas archivadas en la misma ronda', () => {
-      // Pregunta 0 archivada
       gameState.history = [
         {
           roundIndex: 0,
@@ -150,19 +136,15 @@ describe('Caracterización de Reglas de Juego (server.js actual)', () => {
         }
       ];
 
-      // Pregunta 1 activa
       gameState.currentQuestionIndex = 1;
       gameState.submissions = [
         { teamId: 'sistemas', order: 1, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 }
       ];
 
-      server.recalculateScores();
+      game.recalculateScores(gameState, mockQuestionsData);
 
-      // Sistemas: 15 (historial) + 15 (activa) = 30
       assert.equal(gameState.roundScores['sistemas'], 30);
       assert.equal(gameState.teams.find(t => t.id === 'sistemas').score, 30);
-
-      // Alimentos: 13 (historial) + 0 (activa) = 13
       assert.equal(gameState.roundScores['alimentos'], 13);
       assert.equal(gameState.teams.find(t => t.id === 'alimentos').score, 13);
     });
@@ -174,56 +156,110 @@ describe('Caracterización de Reglas de Juego (server.js actual)', () => {
         { teamId: 'sistemas', totalPoints: 15 }
       ];
 
-      server.archiveCurrentQuestionSubmissions();
+      game.archiveCurrentQuestionSubmissions(gameState);
       assert.equal(gameState.history.length, 1);
       assert.equal(gameState.history[0].submissions[0].totalPoints, 15);
 
-      // Actualizar la misma pregunta
       gameState.submissions[0].totalPoints = 10;
-      server.archiveCurrentQuestionSubmissions();
+      game.archiveCurrentQuestionSubmissions(gameState);
       assert.equal(gameState.history.length, 1);
       assert.equal(gameState.history[0].submissions[0].totalPoints, 10);
     });
   });
 
-  describe('Eliminación de Equipos', () => {
-    it('marca al equipo como eliminado y registra eliminatedInRound', () => {
-      const team = gameState.teams.find(t => t.id === 'civil');
-      team.eliminated = true;
-      team.eliminatedInRound = 1;
+  describe('Validación y Creación de Entregas (canSubmit / createSubmission)', () => {
+    it('rechaza entregas si la pregunta no está en estado running', () => {
+      gameState.questionState = 'idle';
+      const check = game.canSubmit(gameState, 'sistemas');
+      assert.equal(check.allowed, false);
+      assert.equal(check.message, 'La pregunta no está activa.');
+    });
 
-      assert.equal(team.eliminated, true);
-      assert.equal(team.eliminatedInRound, 1);
+    it('rechaza entregas si el equipo está eliminado', () => {
+      gameState.questionState = 'running';
+      gameState.teams[0].eliminated = true;
+      const check = game.canSubmit(gameState, 'sistemas');
+      assert.equal(check.allowed, false);
+      assert.equal(check.message, 'El equipo está eliminado o no es válido.');
+    });
 
-      // initRoundScores no lo agrega a roundScores
-      server.initRoundScores();
+    it('rechaza entregas duplicadas del mismo equipo en la misma pregunta', () => {
+      gameState.questionState = 'running';
+      gameState.submissions.push({ teamId: 'sistemas' });
+      const check = game.canSubmit(gameState, 'sistemas');
+      assert.equal(check.allowed, false);
+      assert.equal(check.message, 'Tu equipo ya entregó la respuesta.');
+    });
+
+    it('permite entrega valida y createSubmission genera el formato correcto', () => {
+      gameState.questionState = 'running';
+      const check = game.canSubmit(gameState, 'sistemas');
+      assert.equal(check.allowed, true);
+
+      const sub = game.createSubmission(check.team, 4200, 1);
+      assert.equal(sub.teamId, 'sistemas');
+      assert.equal(sub.teamName, 'Sistemas');
+      assert.equal(sub.elapsedMs, 4200);
+      assert.equal(sub.order, 1);
+      assert.equal(sub.correct, null);
+      assert.equal(sub.basePoints, 0);
+      assert.equal(sub.bonusPoints, 0);
+      assert.equal(sub.totalPoints, 0);
+    });
+  });
+
+  describe('Eliminación Manual de Equipos', () => {
+    it('eliminateTeam marca al equipo como eliminado y registra eliminatedInRound', () => {
+      const eliminated = game.eliminateTeam(gameState, 'civil', 1);
+      assert.notEqual(eliminated, null);
+      assert.equal(eliminated.eliminated, true);
+      assert.equal(eliminated.eliminatedInRound, 1);
+
+      const teamInState = gameState.teams.find(t => t.id === 'civil');
+      assert.equal(teamInState.eliminated, true);
+      assert.equal(teamInState.eliminatedInRound, 1);
+
+      game.initRoundScores(gameState);
       assert.equal(gameState.roundScores['civil'], undefined);
+    });
+
+    it('retorna null si el teamId a eliminar no existe', () => {
+      assert.equal(game.eliminateTeam(gameState, 'no_existe', 1), null);
+    });
+  });
+
+  describe('Privacidad de Estado en Pantalla (getSanitizedState)', () => {
+    it('oculta currentQuestion (null) cuando el estado es idle', () => {
+      gameState.questionState = 'idle';
+      gameState.currentQuestion = { statement: 'Pregunta secreta' };
+      const sanitized = game.getSanitizedState(gameState);
+      assert.equal(sanitized.currentQuestion, null);
+      // El estado interno no se muta
+      assert.notEqual(gameState.currentQuestion, null);
+    });
+
+    it('revela currentQuestion cuando el estado es running', () => {
+      gameState.questionState = 'running';
+      gameState.currentQuestion = { statement: 'Pregunta visible' };
+      const sanitized = game.getSanitizedState(gameState);
+      assert.deepEqual(sanitized.currentQuestion, { statement: 'Pregunta visible' });
     });
   });
 
   describe('Bugs Demostrados en la Lógica Actual (Marcados con skip/todo)', () => {
     it.skip('BUG 1: recalculateScores() falla silenciosamente si questionsData.rounds esta vacio o index fuera de rango', () => {
-      // Demostración del bug en server.js:
-      // const currentRound = questionsData.rounds[gameState.currentRoundIndex];
-      // if (!currentRound) return;
-      // Aborta sin calcular nada aunque submissions tenga datos válidos.
       gameState.currentRoundIndex = 999;
       gameState.submissions = [
         { teamId: 'sistemas', order: 1, correct: true, basePoints: 0, bonusPoints: 0, totalPoints: 0 }
       ];
-      server.recalculateScores();
-      // Debido al bug, totalPoints sigue en 0 en lugar de 15:
+      game.recalculateScores(gameState, mockQuestionsData);
       assert.equal(gameState.submissions[0].totalPoints, 0);
     });
 
     it.skip('BUG 2: archiveCurrentQuestionSubmissions() no borra historial previo si la pregunta se reinicia sin entregas', () => {
-      // Demostración del bug:
-      // if (!gameState.submissions || gameState.submissions.length === 0) return;
-      // Deja intacto el historial anterior causando "entregas fantasma" si se reinicia la pregunta.
       gameState.history = [{ roundIndex: 0, questionIndex: 0, submissions: [{ teamId: 'sistemas', totalPoints: 15 }] }];
       gameState.submissions = [];
-      server.archiveCurrentQuestionSubmissions();
-      // El historial viejo no se limpia:
+      game.archiveCurrentQuestionSubmissions(gameState);
       assert.equal(gameState.history[0].submissions.length, 1);
     });
   });

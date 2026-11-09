@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const validator = require('./utils/validator');
+const game = require('./utils/game');
 
 const app = express();
 const server = http.createServer(app);
@@ -100,55 +101,20 @@ function isValidTeamPassword(teamId, pwd) {
 }
 
 // Master Teams Setup
-const DEFAULT_TEAMS = [
-  { id: 'sistemas', name: 'Ingeniería de Sistemas', shortName: 'Sistemas', color: '#0284c7', eliminated: false, score: 0, eliminatedInRound: null },
-  { id: 'software', name: 'Ingeniería de Software', shortName: 'Software', color: '#06b6d4', eliminated: false, score: 0, eliminatedInRound: null },
-  { id: 'alimentos', name: 'Ingeniería de Alimentos', shortName: 'Alimentos', color: '#16a34a', eliminated: false, score: 0, eliminatedInRound: null },
-  { id: 'quimica', name: 'Ingeniería Química', shortName: 'Química', color: '#9333ea', eliminated: false, score: 0, eliminatedInRound: null },
-  { id: 'civil', name: 'Ingeniería Civil', shortName: 'Civil', color: '#ea580c', eliminated: false, score: 0, eliminatedInRound: null },
-  { id: 'petroquimica', name: 'Téc. Procesos Petroquímicos', shortName: 'Petroquímica', color: '#0d9488', eliminated: false, score: 0, eliminatedInRound: null }
-];
+const DEFAULT_TEAMS = game.DEFAULT_TEAMS;
 
 // Master Game State
-let gameState = {
-  teams: JSON.parse(JSON.stringify(DEFAULT_TEAMS)),
-  currentRoundIndex: 0,
-  currentQuestionIndex: 0,
-  questionState: 'idle', // 'idle' | 'running' | 'paused' | 'ended' | 'evaluated'
-  timer: {
-    duration: 120,
-    remaining: 120,
-    isRunning: false,
-    startTime: null,
-    endTime: null
-  },
-  currentQuestion: null,
-  submissions: [], // Array of { teamId, teamName, submittedAt, elapsedMs, correct: boolean | null, basePoints: 0, bonusPoints: 0, totalPoints: 0 }
-  roundScores: {},
-  history: [],
-  roundSummary: null
-};
+let gameState = game.createInitialGameState();
 
 function initRoundScores() {
-  gameState.roundScores = {};
-  gameState.teams.forEach(t => {
-    if (!t.eliminated) {
-      gameState.roundScores[t.id] = 0;
-      t.score = 0;
-    }
-  });
+  game.initRoundScores(gameState);
 }
-initRoundScores();
 
 // Timer Logic
 let timerInterval = null;
 
 function broadcastState() {
-  const payload = JSON.parse(JSON.stringify(gameState));
-  if (payload.questionState === 'idle') {
-    payload.currentQuestion = null;
-  }
-  io.emit('state_update', payload);
+  io.emit('state_update', game.getSanitizedState(gameState));
 }
 
 function startTimer(durationSeconds) {
@@ -225,78 +191,11 @@ function stopTimer() {
 }
 
 function archiveCurrentQuestionSubmissions() {
-  if (!gameState.submissions || gameState.submissions.length === 0) return;
-  
-  const existingIdx = gameState.history.findIndex(
-    h => h.roundIndex === gameState.currentRoundIndex && h.questionIndex === gameState.currentQuestionIndex
-  );
-  
-  const historyEntry = {
-    roundIndex: gameState.currentRoundIndex,
-    questionIndex: gameState.currentQuestionIndex,
-    submissions: JSON.parse(JSON.stringify(gameState.submissions))
-  };
-
-  if (existingIdx >= 0) {
-    gameState.history[existingIdx] = historyEntry;
-  } else {
-    gameState.history.push(historyEntry);
-  }
+  game.archiveCurrentQuestionSubmissions(gameState);
 }
 
 function recalculateScores() {
-  const currentRound = questionsData.rounds[gameState.currentRoundIndex];
-  if (!currentRound) return;
-  
-  const correctSubmissions = gameState.submissions.filter(s => s.correct === true);
-  const SPEED_BONUSES = [5, 3, 1];
-  
-  gameState.submissions.forEach(sub => {
-    if (sub.correct === true) {
-      sub.basePoints = 10;
-      const rankIdx = correctSubmissions.indexOf(sub);
-      sub.bonusPoints = (rankIdx >= 0 && rankIdx < SPEED_BONUSES.length) ? SPEED_BONUSES[rankIdx] : 0;
-      sub.totalPoints = sub.basePoints + sub.bonusPoints;
-    } else if (sub.correct === false) {
-      sub.basePoints = 0;
-      sub.bonusPoints = 0;
-      sub.totalPoints = 0;
-    } else {
-      sub.basePoints = 0;
-      sub.bonusPoints = 0;
-      sub.totalPoints = 0;
-    }
-  });
-
-  const roundPointsByTeam = {};
-  gameState.teams.forEach(t => {
-    if (!t.eliminated) roundPointsByTeam[t.id] = 0;
-  });
-
-  // 1. Accumulate points from previous questions in this round
-  gameState.history.forEach(item => {
-    if (item.roundIndex === gameState.currentRoundIndex && item.questionIndex !== gameState.currentQuestionIndex) {
-      item.submissions.forEach(sub => {
-        if (sub.totalPoints && roundPointsByTeam[sub.teamId] !== undefined) {
-          roundPointsByTeam[sub.teamId] += sub.totalPoints;
-        }
-      });
-    }
-  });
-
-  // 2. Accumulate points from the current active question
-  gameState.submissions.forEach(sub => {
-    if (sub.totalPoints && roundPointsByTeam[sub.teamId] !== undefined) {
-      roundPointsByTeam[sub.teamId] += sub.totalPoints;
-    }
-  });
-
-  gameState.roundScores = roundPointsByTeam;
-  gameState.teams.forEach(t => {
-    if (roundPointsByTeam[t.id] !== undefined) {
-      t.score = roundPointsByTeam[t.id];
-    }
-  });
+  game.recalculateScores(gameState, questionsData);
 }
 
 // Socket.IO Real-Time Engine
@@ -304,11 +203,7 @@ io.on('connection', (socket) => {
   const clientIp = socket.handshake.address;
 
   // Send Initial Snapshot (Sanitized when question is idle)
-  const initialPayload = JSON.parse(JSON.stringify(gameState));
-  if (initialPayload.questionState === 'idle') {
-    initialPayload.currentQuestion = null;
-  }
-  socket.emit('state_update', initialPayload);
+  socket.emit('state_update', game.getSanitizedState(gameState));
 
   // 1. Admin Authentication with Rate Limiting
   socket.on('admin_login', (data) => {
@@ -454,32 +349,14 @@ io.on('connection', (socket) => {
   socket.on('submit_answer', (data) => {
     const clean = validator.sanitizePayload(data);
     if (!validator.isValidTeamId(clean.teamId)) return;
-    if (gameState.questionState !== 'running') {
-      return socket.emit('submission_error', { message: 'La pregunta no está activa.' });
-    }
 
-    const team = gameState.teams.find(t => t.id === clean.teamId);
-    if (!team || team.eliminated) {
-      return socket.emit('submission_error', { message: 'El equipo está eliminado o no es válido.' });
-    }
-
-    const alreadySubmitted = gameState.submissions.some(s => s.teamId === clean.teamId);
-    if (alreadySubmitted) {
-      return socket.emit('submission_error', { message: 'Tu equipo ya entregó la respuesta.' });
+    const validation = game.canSubmit(gameState, clean.teamId);
+    if (!validation.allowed) {
+      return socket.emit('submission_error', { message: validation.message });
     }
 
     const elapsedMs = gameState.timer.startTime ? Date.now() - gameState.timer.startTime : 0;
-    const submission = {
-      teamId: team.id,
-      teamName: team.shortName || team.name,
-      submittedAt: Date.now(),
-      elapsedMs: Math.max(0, elapsedMs),
-      correct: null,
-      basePoints: 0,
-      bonusPoints: 0,
-      totalPoints: 0,
-      order: gameState.submissions.length + 1
-    };
+    const submission = game.createSubmission(validation.team, elapsedMs, gameState.submissions.length + 1);
 
     gameState.submissions.push(submission);
     recalculateScores();
@@ -490,8 +367,8 @@ io.on('connection', (socket) => {
     });
 
     io.emit('new_submission', {
-      teamId: team.id,
-      teamName: team.shortName,
+      teamId: submission.teamId,
+      teamName: submission.teamName,
       order: submission.order,
       elapsedMs: submission.elapsedMs
     });
@@ -532,10 +409,8 @@ io.on('connection', (socket) => {
     if (!isValidAdminPassword(clean.adminPassword)) return;
     if (!validator.isValidTeamId(clean.teamId)) return;
 
-    const team = gameState.teams.find(t => t.id === clean.teamId);
+    const team = game.eliminateTeam(gameState, clean.teamId, gameState.currentRoundIndex + 1);
     if (team) {
-      team.eliminated = true;
-      team.eliminatedInRound = gameState.currentRoundIndex + 1;
       broadcastState();
       io.emit('team_eliminated', {
         teamId: team.id,
